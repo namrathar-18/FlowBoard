@@ -21,6 +21,8 @@ export default function Register() {
     return e;
   };
 
+  const handleChange = (field) => (e) => setForm((prev) => ({ ...prev, [field]: e.target.value }));
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const errs = validate();
@@ -39,22 +41,6 @@ export default function Register() {
       setLoading(false);
     }
   };
-
-  const Field = ({ id, label, type = 'text', name, placeholder, autoComplete }) => (
-    <div className="form-group">
-      <label className="form-label" htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type={type}
-        className={`form-input ${errors[name] ? 'error' : ''}`}
-        placeholder={placeholder}
-        value={form[name]}
-        onChange={(e) => setForm({ ...form, [name]: e.target.value })}
-        autoComplete={autoComplete}
-      />
-      {errors[name] && <p className="form-error">{errors[name]}</p>}
-    </div>
-  );
 
   return (
     <div className="auth-page">
@@ -75,10 +61,61 @@ export default function Register() {
         <p className="auth-subtitle">Start managing your projects and tasks today.</p>
 
         <form onSubmit={handleSubmit} noValidate>
-          <Field id="reg-name" label="Full Name" name="name" placeholder="Jane Doe" autoComplete="name" />
-          <Field id="reg-email" label="Email Address" type="email" name="email" placeholder="you@example.com" autoComplete="email" />
-          <Field id="reg-password" label="Password" type="password" name="password" placeholder="Min. 6 characters" autoComplete="new-password" />
-          <Field id="reg-confirm" label="Confirm Password" type="password" name="confirm" placeholder="Repeat your password" autoComplete="new-password" />
+          <div className="form-group">
+            <label className="form-label" htmlFor="reg-name">Full Name</label>
+            <input
+              id="reg-name"
+              type="text"
+              className={`form-input ${errors.name ? 'error' : ''}`}
+              placeholder="Jane Doe"
+              value={form.name}
+              onChange={handleChange('name')}
+              autoComplete="name"
+            />
+            {errors.name && <p className="form-error">{errors.name}</p>}
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="reg-email">Email Address</label>
+            <input
+              id="reg-email"
+              type="email"
+              className={`form-input ${errors.email ? 'error' : ''}`}
+              placeholder="you@example.com"
+              value={form.email}
+              onChange={handleChange('email')}
+              autoComplete="email"
+            />
+            {errors.email && <p className="form-error">{errors.email}</p>}
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="reg-password">Password</label>
+            <input
+              id="reg-password"
+              type="password"
+              className={`form-input ${errors.password ? 'error' : ''}`}
+              placeholder="Min. 6 characters"
+              value={form.password}
+              onChange={handleChange('password')}
+              autoComplete="new-password"
+            />
+            {errors.password && <p className="form-error">{errors.password}</p>}
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="reg-confirm">Confirm Password</label>
+            <input
+              id="reg-confirm"
+              type="password"
+              className={`form-input ${errors.confirm ? 'error' : ''}`}
+              placeholder="Repeat your password"
+              value={form.confirm}
+              onChange={handleChange('confirm')}
+              autoComplete="new-password"
+            />
+            {errors.confirm && <p className="form-error">{errors.confirm}</p>}
+          </div>
 
           {errors.general && (
             <div style={{
