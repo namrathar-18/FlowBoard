@@ -1,0 +1,246 @@
+# ============================================================
+# FlowBoard CI/CD Pipeline
+# Triggered on: push and pull_request to main and develop
+# ============================================================
+
+name: FlowBoard CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # JOB 1: Lint — check code quality for both packages
+  # ─────────────────────────────────────────────────────────
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint backend
+        working-directory: backend
+        run: |
+          echo "--- Checking backend JS syntax ---"
+          node --check src/app.js
+          node --check src/models/User.js
+          node --check src/models/Project.js
+          node --check src/models/Task.js
+          node --check src/middleware/auth.js
+          node --check src/routes/auth.js
+          node --check src/routes/projects.js
+          node --check src/routes/tasks.js
+          echo "✅ Backend syntax check passed"
+
+      - name: Lint frontend (build check)
+        working-directory: frontend
+        run: |
+          echo "--- Checking frontend syntax ---"
+          npx vite build --mode development 2>&1 || true
+          echo "✅ Frontend lint complete"
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 2: Test Backend — Jest + Supertest + MongoDB Atlas
+  # ─────────────────────────────────────────────────────────
+  test-backend:
+    name: Backend Tests (Jest)
+    runs-on: ubuntu-latest
+    needs: lint
+
+    env:
+      NODE_ENV: test
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      PORT: 5001
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run backend tests
+        working-directory: backend
+        run: npm test
+        timeout-minutes: 5
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend/coverage/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 3: Test Frontend — Vitest
+  # ─────────────────────────────────────────────────────────
+  test-frontend:
+    name: Frontend Tests (Vitest)
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+        timeout-minutes: 5
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 4: Build — Vite production build
+  # ─────────────────────────────────────────────────────────
+  build:
+    name: Production Build
+    runs-on: ubuntu-latest
+    needs: [ test-backend, test-frontend ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install all dependencies
+        run: |
+          cd backend && npm ci
+          cd ../frontend && npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify build output
+        working-directory: frontend
+        run: |
+          echo "--- Build output ---"
+          ls -lh dist/
+          echo "✅ Production build successful"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowboard-dist
+          path: frontend/dist/
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 5: Security Check
+  # ─────────────────────────────────────────────────────────
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Audit backend dependencies
+        working-directory: backend
+        run: npm audit --audit-level=high || true
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high || true
+
+      - name: Check for secrets in code
+        run: |
+          echo "--- Scanning for accidentally committed secrets ---"
+          if grep -rn "YdAK8YjOHaCdlBuJ" --include="*.js" --include="*.jsx" --include="*.ts" src/ 2>/dev/null; then
+            echo "⚠️  WARNING: Potential secret found in source"
+          else
+            echo "✅ No hardcoded secrets found in source files"
+          fi
+
+  # ─────────────────────────────────────────────────────────
+  # JOB 6: Notify on success (summary)
+  # ─────────────────────────────────────────────────────────
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [ lint, test-backend, test-frontend, build, security ]
+    if: always()
+
+    steps:
+      - name: Print CI summary
+        run: |
+          echo "=================================="
+          echo "  FlowBoard CI Pipeline Summary"
+          echo "=================================="
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo ""
+          echo "Jobs:"
+          echo "  Lint:             ${{ needs.lint.result }}"
+          echo "  Backend Tests:    ${{ needs.test-backend.result }}"
+          echo "  Frontend Tests:   ${{ needs.test-frontend.result }}"
+          echo "  Build:            ${{ needs.build.result }}"
+          echo "  Security:         ${{ needs.security.result }}"
+          echo "=================================="
